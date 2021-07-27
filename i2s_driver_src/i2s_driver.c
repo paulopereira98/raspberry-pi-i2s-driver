@@ -3,6 +3,7 @@
  * Description: Low level driver for the RPI's I2S peripheral
  * Version History
  * v1.0 Initial release
+ * V1.1 Add optimal circular buffer and fix hw interrupt mode (github:paulopereira98)
 */
 
 /* Dependencies */
@@ -22,7 +23,7 @@
 #include "i2s_driver.h"
 
 #define BYTES_PER_SAMPLE        4    // Everything is stored in 32 bits
-#define SAMPLE_BUFF_LEN         16000
+#define SAMPLE_BUFF_LEN         (1<<12) //use base 2 values for optimized circular buffer
 #define SAMPLE_BUFF_LEN_BYTES   BYTES_PER_SAMPLE * SAMPLE_BUFF_LEN
 
 /* Interrupt number associated with the I2S interface */
@@ -120,8 +121,8 @@ static int i2s_init_default(void)
   i2s->CS_A |= I2S_CS_A_TXCLR | I2S_CS_A_RXCLR;
 
   /* Interrupt driven mode */
-  /* Interrupt when TX fifo is less than full and RX fifo is full */
-  i2s->CS_A |= I2S_CS_A_TXTHR(0x1) | I2S_CS_A_RXTHR(0x3);
+  /* Interrupt when TX fifo is less than full and RX fifo is at least */
+  i2s->CS_A |= I2S_CS_A_TXTHR(0x1) | I2S_CS_A_RXTHR(0x2);
   // Enable TXW and RXR interrupts
   i2s->INTEN_A = I2S_INTEN_A_TXW | I2S_INTEN_A_RXR;
 
@@ -245,10 +246,8 @@ static void i2s_reset(void)
    {
      temp = b->buffer[b->tail];          // Read sample from the buffer
      b->tail++;                         // Increment tail
-     if(b->tail == b->size + 1)        // Wrap around condition
-     {
-       b->tail = 0;
-     }
+     
+     b->tail &= b->size-1;            // Wrap around condition
    }
    else
    {
@@ -260,7 +259,7 @@ static void i2s_reset(void)
  /* Write a sample to a buffer */
  static int buffer_write(struct i2s_buffer *b, int32_t data)
  {
-   if( (b->head + 1 == b->tail) || ((b->head + 1 == b->size + 1) && (b->tail == 0)) )
+   if( ((b->head + 1) & (b->size-1)) == b->tail )
    {
      return -1;   //No room
    }
@@ -268,10 +267,7 @@ static void i2s_reset(void)
    {
      b->buffer[b->head] = data;
      b->head++;
-     if(b->head == b->size + 1)        // Wraparound condition
-     {
-       b->head = 0;
-     }
+     b->head &= b->size-1;        // Wraparound condition
    }
    return 0;
  }
